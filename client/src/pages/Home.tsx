@@ -1,74 +1,208 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Header from "@/components/Header";
 import Hero from "@/components/Hero";
 import ProductGrid from "@/components/ProductGrid";
 import Footer from "@/components/Footer";
 import CartModal from "@/components/CartModal";
 import ThemeToggle from "@/components/ThemeToggle";
-import ecommerceImage from '@assets/generated_images/E-commerce_template_preview_e1e23501.png';
-import portfolioImage from '@assets/generated_images/Portfolio_template_preview_208b6b0d.png';
-import saasImage from '@assets/generated_images/SaaS_landing_page_template_c22a17dc.png';
-import restaurantImage from '@assets/generated_images/Restaurant_template_preview_002cc9df.png';
-import corporateImage from '@assets/generated_images/Corporate_template_preview_f5c0aa6f.png';
-import fitnessImage from '@assets/generated_images/Fitness_template_preview_c999bc94.png';
+import type { Template, TemplateCategory } from "@shared/schema";
+import {
+  addCartItem,
+  checkoutCart,
+  fetchCart,
+  fetchTemplates,
+  removeCartItem,
+  updateCartItem,
+} from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
-const mockProducts = [
-  { id: 1, title: "Modern E-Commerce", category: "E-Commerce", price: 79, imageUrl: ecommerceImage },
-  { id: 2, title: "Creative Portfolio", category: "Portfolio", price: 59, imageUrl: portfolioImage },
-  { id: 3, title: "SaaS Landing Pro", category: "SaaS", price: 89, imageUrl: saasImage },
-  { id: 4, title: "Restaurant Deluxe", category: "Restaurant", price: 69, imageUrl: restaurantImage },
-  { id: 5, title: "Corporate Suite", category: "Corporate", price: 99, imageUrl: corporateImage },
-  { id: 6, title: "Fitness Hub", category: "Fitness", price: 74, imageUrl: fitnessImage },
-];
+type CategoryFilter = "all" | TemplateCategory;
 
 export default function Home() {
   const [cartOpen, setCartOpen] = useState(false);
-  const [cartItems, setCartItems] = useState<Array<{ id: number; title: string; price: number; imageUrl: string }>>([]);
+  const [selectedCategory, setSelectedCategory] =
+    useState<CategoryFilter>("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
-  const handleAddToCart = (productId: number) => {
-    const product = mockProducts.find(p => p.id === productId);
-    if (product && !cartItems.find(item => item.id === productId)) {
-      setCartItems([...cartItems, product]);
-      console.log('Added to cart:', product);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchTerm(searchInput.trim());
+    }, 250);
+
+    return () => clearTimeout(handler);
+  }, [searchInput]);
+
+  const {
+    data: templatesResponse,
+    isLoading: templatesLoading,
+    isError: templatesError,
+  } = useQuery({
+    queryKey: ["templates", { search: searchTerm, category: selectedCategory }],
+    queryFn: () =>
+      fetchTemplates({
+        search: searchTerm || undefined,
+        category: selectedCategory,
+        status: "published",
+      }),
+  });
+
+  const { data: cartData } = useQuery({
+    queryKey: ["cart"],
+    queryFn: fetchCart,
+  });
+
+  const templates: Template[] = templatesResponse?.data ?? [];
+
+  const cartItemCount = useMemo(
+    () => cartData?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+    [cartData?.items],
+  );
+
+  const addToCartMutation = useMutation({
+    mutationFn: (templateId: string) => addCartItem(templateId),
+    onSuccess: (updatedCart) => {
+      queryClient.setQueryData(["cart"], updatedCart);
+      setCartOpen(true);
+      toast({
+        title: "Template added to cart",
+        description: "You can review your cart before checkout.",
+      });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Could not add template",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateCartMutation = useMutation({
+    mutationFn: async ({
+      itemId,
+      quantity,
+    }: {
+      itemId: string;
+      quantity: number;
+    }) => {
+      if (quantity <= 0) {
+        return await removeCartItem(itemId);
+      }
+      return await updateCartItem(itemId, quantity);
+    },
+    onSuccess: (updatedCart) => {
+      queryClient.setQueryData(["cart"], updatedCart);
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Unable to update cart",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const checkoutMutation = useMutation({
+    mutationFn: checkoutCart,
+    onSuccess: ({ cart }) => {
+      queryClient.setQueryData(["cart"], cart);
+      toast({
+        title: "Checkout complete",
+        description: "We have emailed your receipt and download links.",
+      });
+      setCartOpen(false);
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Checkout failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handlePreview = (templateId: string) => {
+    const template = templates.find((t) => t.id === templateId);
+    if (template) {
+      setLocation(`/templates/${template.slug}`);
     }
   };
 
-  const handleRemoveFromCart = (productId: number) => {
-    setCartItems(cartItems.filter(item => item.id !== productId));
-    console.log('Removed from cart:', productId);
+  const handleAddToCart = (templateId: string) => {
+    addToCartMutation.mutate(templateId);
+  };
+
+  const handleRemoveFromCart = (itemId: string) => {
+    updateCartMutation.mutate({ itemId, quantity: 0 });
+  };
+
+  const handleUpdateQuantity = (itemId: string, quantity: number) => {
+    updateCartMutation.mutate({ itemId, quantity });
   };
 
   const handleCheckout = () => {
-    console.log('Proceeding to checkout with items:', cartItems);
-    alert('Checkout functionality will be implemented in the full app!');
+    checkoutMutation.mutate();
   };
+
+  const isLoadingState = templatesLoading;
+  const showErrorState = templatesError;
 
   return (
     <div className="min-h-screen">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
       </div>
-      
-      <Header 
-        cartItemCount={cartItems.length}
+
+      <Header
+        cartItemCount={cartItemCount}
         onCartClick={() => setCartOpen(true)}
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
       />
-      
+
       <Hero />
-      
-      <ProductGrid 
-        products={mockProducts}
-        onPreview={(id) => console.log('Preview product', id)}
-        onAddToCart={handleAddToCart}
-      />
-      
+
+      {showErrorState ? (
+        <div className="max-w-3xl mx-auto my-16 text-center">
+          <h2 className="text-3xl font-display font-bold mb-2">
+            Unable to load templates
+          </h2>
+          <p className="text-muted-foreground">
+            Please refresh the page or try again later.
+          </p>
+        </div>
+      ) : isLoadingState ? (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-20 text-center text-muted-foreground">
+          Loading templates...
+        </div>
+      ) : (
+        <ProductGrid
+          products={templates}
+          onPreview={handlePreview}
+          onAddToCart={handleAddToCart}
+          selectedCategory={selectedCategory}
+          onCategorySelect={setSelectedCategory}
+        />
+      )}
+
       <Footer />
-      
+
       <CartModal
         open={cartOpen}
         onOpenChange={setCartOpen}
-        items={cartItems}
+        items={cartData?.items}
+        subtotal={cartData?.subtotal}
         onRemoveItem={handleRemoveFromCart}
+        onUpdateItemQuantity={handleUpdateQuantity}
         onCheckout={handleCheckout}
       />
     </div>

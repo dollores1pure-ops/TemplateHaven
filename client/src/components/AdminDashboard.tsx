@@ -1,25 +1,77 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Package, DollarSign, Eye, TrendingUp } from "lucide-react";
+import {
+  Plus,
+  Package,
+  DollarSign,
+  Eye,
+  TrendingUp,
+  LogOut,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import type { Template, AdminStats } from "@shared/schema";
 
 interface AdminDashboardProps {
   onAddProduct?: () => void;
-  products?: Array<{
-    id: number;
-    title: string;
-    category: string;
-    price: number;
-    status: string;
-  }>;
+  onEditTemplate?: (template: Template) => void;
+  onDeleteTemplate?: (template: Template) => void;
+  onLogout?: () => void;
+  products?: Template[];
+  stats?: AdminStats | null;
 }
 
-export default function AdminDashboard({ onAddProduct, products = [] }: AdminDashboardProps) {
-  const stats = [
-    { label: "Total Products", value: products.length, icon: Package, color: "text-primary" },
-    { label: "Total Revenue", value: "$12,450", icon: DollarSign, color: "text-green-600" },
-    { label: "Total Views", value: "45.2K", icon: Eye, color: "text-blue-600" },
-    { label: "Conversion", value: "3.2%", icon: TrendingUp, color: "text-purple-600" },
+const categoryLabels: Record<string, string> = {
+  ecommerce: "E-Commerce",
+  portfolio: "Portfolio",
+  saas: "SaaS",
+  restaurant: "Restaurant",
+  corporate: "Corporate",
+  fitness: "Fitness",
+};
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+export default function AdminDashboard({
+  onAddProduct,
+  onEditTemplate,
+  onDeleteTemplate,
+  onLogout,
+  products = [],
+  stats,
+}: AdminDashboardProps) {
+  const statCards = [
+    {
+      label: "Total Templates",
+      value: stats ? stats.totalTemplates : products.length,
+      icon: Package,
+      color: "text-primary",
+    },
+    {
+      label: "Published",
+      value: stats
+        ? stats.publishedTemplates
+        : products.filter((p) => p.status === "published").length,
+      icon: Eye,
+      color: "text-blue-600",
+    },
+    {
+      label: "Total Revenue",
+      value: stats ? formatCurrency(stats.totalRevenue) : formatCurrency(0),
+      icon: DollarSign,
+      color: "text-green-600",
+    },
+    {
+      label: "Orders",
+      value: stats ? stats.totalOrders : 0,
+      icon: TrendingUp,
+      color: "text-purple-600",
+    },
   ];
 
   return (
@@ -27,19 +79,40 @@ export default function AdminDashboard({ onAddProduct, products = [] }: AdminDas
       <div className="max-w-7xl mx-auto p-6">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-4xl font-display font-bold mb-2" data-testid="text-dashboard-title">
+            <h1
+              className="text-4xl font-display font-bold mb-2"
+              data-testid="text-dashboard-title"
+            >
               Admin Dashboard
             </h1>
-            <p className="text-muted-foreground">Manage your template marketplace</p>
+            <p className="text-muted-foreground">
+              Manage your template marketplace
+            </p>
           </div>
-          <Button onClick={onAddProduct} size="lg" data-testid="button-add-product">
-            <Plus className="h-5 w-5 mr-2" />
-            Add New Product
-          </Button>
+          <div className="flex items-center gap-3">
+            {onLogout && (
+              <Button
+                variant="outline"
+                onClick={onLogout}
+                data-testid="button-admin-logout"
+              >
+                <LogOut className="h-5 w-5 mr-2" />
+                Logout
+              </Button>
+            )}
+            <Button
+              onClick={onAddProduct}
+              size="lg"
+              data-testid="button-add-product"
+            >
+              <Plus className="h-5 w-5 mr-2" />
+              Add New Template
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat) => (
+          {statCards.map((stat) => (
             <Card key={stat.label}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -48,7 +121,10 @@ export default function AdminDashboard({ onAddProduct, products = [] }: AdminDas
                 <stat.icon className={`h-5 w-5 ${stat.color}`} />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold font-display" data-testid={`stat-${stat.label.toLowerCase().replace(/\s+/g, '-')}`}>
+                <div
+                  className="text-3xl font-bold font-display"
+                  data-testid={`stat-${stat.label.toLowerCase().replace(/\s+/g, "-")}`}
+                >
                   {stat.value}
                 </div>
               </CardContent>
@@ -77,22 +153,51 @@ export default function AdminDashboard({ onAddProduct, products = [] }: AdminDas
                     <div className="flex items-center gap-4">
                       <div className="h-16 w-24 bg-muted rounded-md" />
                       <div>
-                        <h3 className="font-semibold" data-testid={`text-product-title-${product.id}`}>
+                        <h3
+                          className="font-semibold"
+                          data-testid={`text-product-title-${product.id}`}
+                        >
                           {product.title}
                         </h3>
                         <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="secondary" data-testid={`badge-category-${product.id}`}>
-                            {product.category}
+                          <Badge
+                            variant="secondary"
+                            data-testid={`badge-category-${product.id}`}
+                          >
+                            {categoryLabels[product.category] ??
+                              product.category}
                           </Badge>
-                          <span className="text-sm text-muted-foreground">${product.price}</span>
+                          <Badge
+                            variant={
+                              product.status === "published"
+                                ? "default"
+                                : "secondary"
+                            }
+                            data-testid={`badge-status-${product.id}`}
+                          >
+                            {product.status}
+                          </Badge>
+                          <span className="text-sm text-muted-foreground">
+                            ${product.price}
+                          </span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" data-testid={`button-edit-${product.id}`}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid={`button-edit-${product.id}`}
+                        onClick={() => onEditTemplate?.(product)}
+                      >
                         Edit
                       </Button>
-                      <Button variant="ghost" size="sm" data-testid={`button-delete-${product.id}`}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid={`button-delete-${product.id}`}
+                        onClick={() => onDeleteTemplate?.(product)}
+                      >
                         Delete
                       </Button>
                     </div>
