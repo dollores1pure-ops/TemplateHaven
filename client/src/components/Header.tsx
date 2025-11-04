@@ -2,15 +2,28 @@ import { ShoppingCart, Search, Menu, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface HeaderProps {
   cartItemCount?: number;
   onCartClick?: () => void;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
 }
 
-export default function Header({ cartItemCount = 0, onCartClick }: HeaderProps) {
+export default function Header({
+  cartItemCount = 0,
+  onCartClick,
+  searchValue,
+  onSearchChange,
+}: HeaderProps) {
   const [searchOpen, setSearchOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchValue && searchValue.trim().length > 0) {
+      setSearchOpen(true);
+    }
+  }, [searchValue]);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -22,15 +35,23 @@ export default function Header({ cartItemCount = 0, onCartClick }: HeaderProps) 
                 TemplateHub
               </span>
             </Link>
-            
+
             <nav className="hidden md:flex items-center gap-1">
               <Link href="/" data-testid="link-templates">
-                <Button variant="ghost" size="sm" data-testid="button-templates">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="button-templates"
+                >
                   Templates
                 </Button>
               </Link>
               <Link href="/categories" data-testid="link-categories">
-                <Button variant="ghost" size="sm" data-testid="button-categories">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="button-categories"
+                >
                   Categories
                 </Button>
               </Link>
@@ -45,6 +66,8 @@ export default function Header({ cartItemCount = 0, onCartClick }: HeaderProps) 
                   placeholder="Search templates..."
                   className="w-full"
                   data-testid="input-search"
+                  value={searchValue ?? ""}
+                  onChange={(event) => onSearchChange?.(event.target.value)}
                   autoFocus
                   onBlur={() => setSearchOpen(false)}
                 />
@@ -69,7 +92,10 @@ export default function Header({ cartItemCount = 0, onCartClick }: HeaderProps) 
             >
               <ShoppingCart className="h-5 w-5" />
               {cartItemCount > 0 && (
-                <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center" data-testid="text-cart-count">
+                <span
+                  className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center"
+                  data-testid="text-cart-count"
+                >
                   {cartItemCount}
                 </span>
               )}
@@ -81,7 +107,12 @@ export default function Header({ cartItemCount = 0, onCartClick }: HeaderProps) 
               </Button>
             </Link>
 
-            <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-menu">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              data-testid="button-menu"
+            >
               <Menu className="h-5 w-5" />
             </Button>
           </div>

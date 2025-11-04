@@ -1,23 +1,62 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectSession from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+if (app.get("env") === "production") {
+  app.set("trust proxy", 1);
+}
+const MemoryStore = connectSession(session);
+
+declare module "express-session" {
+  interface SessionData {
+    userId?: string;
+    cartId?: string;
+  }
+}
 
 // Extinderea tipurilor pentru rawBody
-declare module 'http' {
+declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
   }
 }
 
 // Middleware JSON + rawBody
-app.use(express.json({
-  verify: (req, _res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: false }));
+
+const sessionSecret = process.env.SESSION_SECRET || "templatehub-dev-secret";
+
+if (!process.env.SESSION_SECRET) {
+  log("SESSION_SECRET not set, falling back to development secret", "config");
+}
+
+app.use(
+  session({
+    name: "templhub.sid",
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore({
+      checkPeriod: 1000 * 60 * 60 * 24, // prune expired sessions daily
+    }),
+    cookie: {
+      httpOnly: true,
+      secure: app.get("env") === "production",
+      sameSite: app.get("env") === "production" ? "lax" : "lax",
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  }),
+);
 
 // Middleware logging pentru API
 app.use((req, res, next) => {
@@ -71,11 +110,14 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   const host = process.platform === "win32" ? "127.0.0.1" : "0.0.0.0";
 
-  server.listen({
-    port,
-    host,
-    ...(process.platform !== "win32" ? { reusePort: true } : {}),
-  }, () => {
-    log(`Server running on ${host}:${port}`);
-  });
+  server.listen(
+    {
+      port,
+      host,
+      ...(process.platform !== "win32" ? { reusePort: true } : {}),
+    },
+    () => {
+      log(`Server running on ${host}:${port}`);
+    },
+  );
 })();

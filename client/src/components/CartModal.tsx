@@ -10,18 +10,23 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ShoppingCart, X } from "lucide-react";
 
-interface CartItem {
-  id: number;
-  title: string;
-  price: number;
-  imageUrl: string;
-}
-
 interface CartModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  items?: CartItem[];
-  onRemoveItem?: (id: number) => void;
+  items?: Array<{
+    id: string;
+    quantity: number;
+    unitPrice: number;
+    template: {
+      id: string;
+      title: string;
+      heroImage: string;
+      price: number;
+    };
+  }>;
+  subtotal?: number;
+  onRemoveItem?: (id: string) => void;
+  onUpdateItemQuantity?: (id: string, quantity: number) => void;
   onCheckout?: () => void;
 }
 
@@ -29,21 +34,30 @@ export default function CartModal({
   open,
   onOpenChange,
   items = [],
+  subtotal,
   onRemoveItem,
+  onUpdateItemQuantity,
   onCheckout,
 }: CartModalProps) {
-  const total = items.reduce((sum, item) => sum + item.price, 0);
+  const total =
+    subtotal !== undefined
+      ? subtotal
+      : items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const formattedTotal = total.toFixed(2);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg flex flex-col">
         <SheetHeader>
-          <SheetTitle className="flex items-center gap-2" data-testid="text-cart-title">
+          <SheetTitle
+            className="flex items-center gap-2"
+            data-testid="text-cart-title"
+          >
             <ShoppingCart className="h-5 w-5" />
             Shopping Cart
           </SheetTitle>
           <SheetDescription>
-            {items.length} {items.length === 1 ? 'item' : 'items'} in your cart
+            {items.length} {items.length === 1 ? "item" : "items"} in your cart
           </SheetDescription>
         </SheetHeader>
 
@@ -51,7 +65,10 @@ export default function CartModal({
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <ShoppingCart className="h-16 w-16 text-muted-foreground mb-4 opacity-50" />
-              <p className="text-muted-foreground" data-testid="text-cart-empty">
+              <p
+                className="text-muted-foreground"
+                data-testid="text-cart-empty"
+              >
                 Your cart is empty
               </p>
             </div>
@@ -64,26 +81,65 @@ export default function CartModal({
                   data-testid={`cart-item-${item.id}`}
                 >
                   <img
-                    src={item.imageUrl}
-                    alt={item.title}
+                    src={item.template.heroImage}
+                    alt={item.template.title}
                     className="w-20 h-16 object-cover rounded-md"
                   />
                   <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold text-sm line-clamp-1" data-testid={`text-cart-item-title-${item.id}`}>
-                      {item.title}
+                    <h4
+                      className="font-semibold text-sm line-clamp-1"
+                      data-testid={`text-cart-item-title-${item.id}`}
+                    >
+                      {item.template.title}
                     </h4>
-                    <p className="text-lg font-bold font-display mt-1" data-testid={`text-cart-item-price-${item.id}`}>
-                      ${item.price}
+                    <p className="text-sm text-muted-foreground mt-1">
+                      ${item.unitPrice} × {item.quantity}
+                    </p>
+                    <p
+                      className="text-lg font-bold font-display"
+                      data-testid={`text-cart-item-price-${item.id}`}
+                    >
+                      ${(item.unitPrice * item.quantity).toFixed(2)}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onRemoveItem?.(item.id)}
-                    data-testid={`button-remove-${item.id}`}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex flex-col items-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onRemoveItem?.(item.id)}
+                      data-testid={`button-remove-${item.id}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          onUpdateItemQuantity?.(
+                            item.id,
+                            Math.max(0, item.quantity - 1),
+                          )
+                        }
+                        data-testid={`button-quantity-decrease-${item.id}`}
+                      >
+                        -
+                      </Button>
+                      <span className="w-6 text-center text-sm font-medium">
+                        {item.quantity}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          onUpdateItemQuantity?.(item.id, item.quantity + 1)
+                        }
+                        data-testid={`button-quantity-increase-${item.id}`}
+                      >
+                        +
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -96,11 +152,19 @@ export default function CartModal({
             <SheetFooter className="flex-col gap-4 sm:flex-col">
               <div className="flex items-center justify-between text-lg">
                 <span className="font-semibold">Total</span>
-                <span className="font-bold font-display text-2xl tabular-nums" data-testid="text-cart-total">
-                  ${total}
+                <span
+                  className="font-bold font-display text-2xl tabular-nums"
+                  data-testid="text-cart-total"
+                >
+                  ${formattedTotal}
                 </span>
               </div>
-              <Button size="lg" className="w-full" onClick={onCheckout} data-testid="button-checkout">
+              <Button
+                size="lg"
+                className="w-full"
+                onClick={onCheckout}
+                data-testid="button-checkout"
+              >
                 Proceed to Checkout
               </Button>
             </SheetFooter>
