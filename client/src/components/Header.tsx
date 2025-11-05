@@ -9,6 +9,7 @@ interface HeaderProps {
   onCartClick?: () => void;
   searchValue?: string;
   onSearchChange?: (value: string) => void;
+  onNavigateHome?: () => void;
 }
 
 export default function Header({
@@ -16,6 +17,7 @@ export default function Header({
   onCartClick,
   searchValue,
   onSearchChange,
+  onNavigateHome,
 }: HeaderProps) {
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -31,7 +33,10 @@ export default function Header({
         <div className="flex h-16 items-center justify-between gap-4">
           <div className="flex items-center gap-6">
             <Link href="/" data-testid="link-home">
-              <span className="text-2xl font-display font-bold tracking-tight hover-elevate active-elevate-2 px-3 py-2 rounded-md cursor-pointer">
+              <span
+                className="text-2xl font-display font-bold tracking-tight hover-elevate active-elevate-2 px-3 py-2 rounded-md cursor-pointer"
+                onClick={onNavigateHome}
+              >
                 TemplateHub
               </span>
             </Link>
@@ -42,6 +47,7 @@ export default function Header({
                   variant="ghost"
                   size="sm"
                   data-testid="button-templates"
+                  onClick={onNavigateHome}
                 >
                   Templates
                 </Button>

@@ -30,6 +30,12 @@ export default function Home() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
+  const handleNavigateHome = () => {
+    setSelectedCategory("all");
+    setSearchInput("");
+    setSearchTerm("");
+  };
+
   useEffect(() => {
     const handler = setTimeout(() => {
       setSearchTerm(searchInput.trim());
@@ -172,6 +178,7 @@ export default function Home() {
         onCartClick={() => setCartOpen(true)}
         searchValue={searchInput}
         onSearchChange={setSearchInput}
+        onNavigateHome={handleNavigateHome}
       />
 
       <Hero />
