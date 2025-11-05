@@ -210,6 +210,23 @@ function getRequestBaseUrl(req: Request): string {
   return `${protocol}://${host}`;
 }
 
+function resolveStripeImageUrl(baseUrl: string, image?: string | null) {
+  if (!image) {
+    return undefined;
+  }
+
+  try {
+    const resolved = new URL(image, baseUrl);
+    if (resolved.protocol === "http:" || resolved.protocol === "https:") {
+      return resolved.toString();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 function handleZodError(res: Response, error: z.ZodError) {
   const issues = error.issues.map((issue) => ({
     path: issue.path.join("."),
@@ -519,19 +536,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const currency = (process.env.STRIPE_CURRENCY ?? "usd").toLowerCase();
 
         const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
-          cart.items.map((item) => ({
-            quantity: item.quantity,
-            price_data: {
-              currency,
-              unit_amount: Math.round(item.unitPrice * 100),
-              product_data: {
-                name: item.template.title,
-                images: item.template.heroImage
-                  ? [item.template.heroImage]
-                  : undefined,
+          cart.items.map((item) => {
+            const imageUrl = resolveStripeImageUrl(
+              baseUrl,
+              item.template.heroImage,
+            );
+
+            return {
+              quantity: item.quantity,
+              price_data: {
+                currency,
+                unit_amount: Math.round(item.unitPrice * 100),
+                product_data: {
+                  name: item.template.title,
+                  images: imageUrl ? [imageUrl] : undefined,
+                },
               },
-            },
-          }));
+            };
+          });
 
         const session = await stripe.checkout.sessions.create({
           mode: "payment",

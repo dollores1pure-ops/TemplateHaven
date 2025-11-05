@@ -3,10 +3,11 @@ import { Link, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import ThemeToggle from "@/components/ThemeToggle";
 import { addCartItem, fetchTemplate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { ShoppingCart, ArrowLeft } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
+import ReviewsSection from "@/components/ReviewsSection";
 
 export default function TemplateDetail() {
   const [, params] = useRoute("/templates/:id");
@@ -217,6 +218,8 @@ export default function TemplateDetail() {
             )}
           </aside>
         </div>
+
+        <ReviewsSection />
       </div>
     </div>
   );
