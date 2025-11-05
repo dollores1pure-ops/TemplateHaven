@@ -1,4 +1,4 @@
-import { ShoppingCart, Search, Menu, User } from "lucide-react";
+import { ShoppingCart, Search, Menu, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
@@ -89,38 +89,60 @@ export default function Header({
               </Button>
             )}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative"
-              onClick={onCartClick}
-              data-testid="button-cart"
-            >
-              <ShoppingCart className="h-5 w-5" />
-              {cartItemCount > 0 && (
-                <span
-                  className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center"
-                  data-testid="text-cart-count"
-                >
-                  {cartItemCount}
-                </span>
-              )}
-            </Button>
-
-            <Link href="/admin" data-testid="link-admin">
-              <Button variant="ghost" size="icon" data-testid="button-admin">
-                <User className="h-5 w-5" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                onClick={onCartClick}
+                data-testid="button-cart"
+              >
+                <ShoppingCart className="h-5 w-5" />
+                {cartItemCount > 0 && (
+                  <span
+                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center"
+                    data-testid="text-cart-count"
+                  >
+                    {cartItemCount}
+                  </span>
+                )}
               </Button>
-            </Link>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              data-testid="button-menu"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
+              <div className="hidden md:flex items-center gap-2">
+                <Link href="/login" data-testid="link-login">
+                  <Button variant="ghost" size="sm" data-testid="button-login">
+                    Log in
+                  </Button>
+                </Link>
+                <Link href="/signup" data-testid="link-signup">
+                  <Button size="sm" data-testid="button-signup">
+                    Sign up
+                  </Button>
+                </Link>
+              </div>
+
+              <Link
+                href="/login"
+                data-testid="link-login-mobile"
+                className="md:hidden"
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Log in"
+                  data-testid="button-login-mobile"
+                >
+                  <LogIn className="h-5 w-5" />
+                </Button>
+              </Link>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden"
+                data-testid="button-menu"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
           </div>
         </div>
       </div>

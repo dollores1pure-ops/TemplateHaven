@@ -127,11 +127,11 @@ export default function CheckoutSuccess() {
       </div>
 
       <div className="flex justify-center gap-4 mt-12">
-        <Button
-          variant="outline"
-          size="lg"
-          onClick={() => setLocation("/admin")}
-        >
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setLocation("/admindash")}
+          >
           View orders dashboard
         </Button>
         <Button size="lg" onClick={handleReturnHome}>
