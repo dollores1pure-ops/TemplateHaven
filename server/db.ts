@@ -13,4 +13,4 @@ if (!databaseUrl) {
 }
 
 export const pool = mysql.createPool(databaseUrl);
-export const db = drizzle(pool, { schema });
+export const db = drizzle(pool, { schema, mode: "default" });
