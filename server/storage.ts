@@ -14,10 +14,23 @@ import {
   type User,
   templateStatusSchema,
 } from "@shared/schema";
-import { randomUUID, scryptSync, timingSafeEqual } from "crypto";
+import { randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 
 const DEFAULT_TEMPLATE_IMAGE =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1600&q=80";
+
+const PERSISTENCE_VERSION = 1;
+
+interface PersistedData {
+  version: number;
+  users: User[];
+  templates: Template[];
+  carts: Cart[];
+  orders: Order[];
+}
 
 export type TemplateSort =
   | "newest"
@@ -79,8 +92,38 @@ export class MemStorage implements IStorage {
   private readonly carts = new Map<string, Cart>();
   private readonly orders = new Map<string, Order>();
 
+  private readonly dataDir: string;
+  private readonly dataFile: string;
+
+  private isBootstrapping = true;
+  private bootstrapDirty = false;
+  private persistQueue: Promise<void> = Promise.resolve();
+
   constructor() {
-    this.seedInitialData();
+    this.dataDir = path.resolve(
+      process.cwd(),
+      process.env.DATA_DIR ?? "data",
+    );
+    this.dataFile = path.join(this.dataDir, "storage.json");
+    mkdirSync(this.dataDir, { recursive: true });
+
+    this.loadFromDisk();
+    this.ensureAdminUser();
+
+    if (this.templates.size === 0) {
+      this.seedTemplates();
+    }
+
+    if (this.orders.size === 0) {
+      this.seedOrders();
+    }
+
+    this.isBootstrapping = false;
+
+    if (this.bootstrapDirty) {
+      void this.persist();
+      this.bootstrapDirty = false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -104,14 +147,10 @@ export class MemStorage implements IStorage {
       throw new Error("Username already exists");
     }
 
-    const id = randomUUID();
-    const user: User = {
-      id,
-      username: insertUser.username,
-      password: this.hashPassword(insertUser.password),
-    };
-
-    this.users.set(id, user);
+    const user = this.createUserRecord(insertUser);
+    this.users.set(user.id, user);
+    this.markDirty();
+    await this.persist();
     return { ...user };
   }
 
@@ -126,6 +165,15 @@ export class MemStorage implements IStorage {
 
     const isValid = this.verifyPassword(password, user.password);
     return isValid ? { ...user } : undefined;
+  }
+
+  private createUserRecord(insertUser: InsertUser): User {
+    const id = randomUUID();
+    return {
+      id,
+      username: insertUser.username,
+      password: this.hashPassword(insertUser.password),
+    };
   }
 
   private hashPassword(password: string): string {
@@ -177,34 +225,8 @@ export class MemStorage implements IStorage {
   }
 
   async createTemplate(data: InsertTemplate): Promise<Template> {
-    const now = new Date().toISOString();
-    const baseSlug = this.slugify(data.slug ?? data.title);
-    const slug = this.ensureUniqueSlug(baseSlug);
-
-    const galleryImages = this.sanitizeStringArray(data.galleryImages);
-    const heroImage =
-      data.heroImage ?? galleryImages[0] ?? DEFAULT_TEMPLATE_IMAGE;
-
-    const template: Template = {
-      id: randomUUID(),
-      slug,
-      title: data.title,
-      category: data.category,
-      price: this.normalizePrice(data.price),
-      status: this.normalizeTemplateStatus(data.status),
-      description: data.description,
-      heroImage,
-      galleryImages: galleryImages.length ? galleryImages : [heroImage],
-      videoUrl: data.videoUrl ?? null,
-      liveDemoUrl: data.liveDemoUrl ?? null,
-      figmaUrl: data.figmaUrl ?? null,
-      tags: this.sanitizeStringArray(data.tags),
-      features: this.sanitizeStringArray(data.features),
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.templates.set(template.id, template);
+    const template = this.insertTemplate(data);
+    await this.persist();
     return this.cloneTemplate(template);
   }
 
@@ -268,11 +290,51 @@ export class MemStorage implements IStorage {
     }
 
     this.templates.set(id, merged);
+    this.markDirty();
+    await this.persist();
     return this.cloneTemplate(merged);
   }
 
   async deleteTemplate(id: string): Promise<boolean> {
-    return this.templates.delete(id);
+    const deleted = this.templates.delete(id);
+    if (deleted) {
+      this.markDirty();
+      await this.persist();
+    }
+    return deleted;
+  }
+
+  private insertTemplate(data: InsertTemplate): Template {
+    const now = new Date().toISOString();
+    const baseSlug = this.slugify(data.slug ?? data.title);
+    const slug = this.ensureUniqueSlug(baseSlug);
+
+    const galleryImages = this.sanitizeStringArray(data.galleryImages);
+    const heroImage =
+      data.heroImage ?? galleryImages[0] ?? DEFAULT_TEMPLATE_IMAGE;
+
+    const template: Template = {
+      id: randomUUID(),
+      slug,
+      title: data.title,
+      category: data.category,
+      price: this.normalizePrice(data.price),
+      status: this.normalizeTemplateStatus(data.status),
+      description: data.description,
+      heroImage,
+      galleryImages: galleryImages.length ? galleryImages : [heroImage],
+      videoUrl: data.videoUrl ?? null,
+      liveDemoUrl: data.liveDemoUrl ?? null,
+      figmaUrl: data.figmaUrl ?? null,
+      tags: this.sanitizeStringArray(data.tags),
+      features: this.sanitizeStringArray(data.features),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.templates.set(template.id, template);
+    this.markDirty();
+    return template;
   }
 
   private matchesTemplateFilters(
@@ -452,6 +514,8 @@ export class MemStorage implements IStorage {
     };
 
     this.carts.set(cart.id, cart);
+    this.markDirty();
+    await this.persist();
     return this.cloneCart(cart);
   }
 
@@ -484,6 +548,8 @@ export class MemStorage implements IStorage {
     }
 
     this.recalculateCart(cart);
+    this.markDirty();
+    await this.persist();
     return this.cloneCart(cart);
   }
 
@@ -506,6 +572,8 @@ export class MemStorage implements IStorage {
     }
 
     this.recalculateCart(cart);
+    this.markDirty();
+    await this.persist();
     return this.cloneCart(cart);
   }
 
@@ -513,6 +581,8 @@ export class MemStorage implements IStorage {
     const cart = await this.getCartRecord(cartId);
     cart.items = cart.items.filter((item) => item.id !== cartItemId);
     this.recalculateCart(cart);
+    this.markDirty();
+    await this.persist();
     return this.cloneCart(cart);
   }
 
@@ -520,6 +590,8 @@ export class MemStorage implements IStorage {
     const cart = await this.getCartRecord(cartId);
     cart.items = [];
     cart.subtotal = 0;
+    this.markDirty();
+    await this.persist();
     return this.cloneCart(cart);
   }
 
@@ -532,6 +604,7 @@ export class MemStorage implements IStorage {
         subtotal: 0,
       };
       this.carts.set(cartId, cart);
+      this.markDirty();
     }
 
     return cart;
@@ -588,6 +661,8 @@ export class MemStorage implements IStorage {
     cart.items = [];
     cart.subtotal = 0;
 
+    this.markDirty();
+    await this.persist();
     return this.cloneOrder(order);
   }
 
@@ -635,18 +710,128 @@ export class MemStorage implements IStorage {
   }
 
   // ---------------------------------------------------------------------------
-  // Seeding helpers
+  // Persistence helpers
   // ---------------------------------------------------------------------------
 
-  private seedInitialData(): void {
-    this.ensureAdminUser();
-    if (this.templates.size === 0) {
-      this.seedTemplates();
+  private async persist(): Promise<void> {
+    if (this.isBootstrapping) {
+      this.bootstrapDirty = true;
+      return;
     }
-    if (this.orders.size === 0) {
-      this.seedOrders();
+
+    const snapshot = this.serialize();
+    const payload = JSON.stringify(snapshot, null, 2);
+
+    this.persistQueue = this.persistQueue
+      .catch(() => undefined)
+      .then(() => writeFile(this.dataFile, payload, "utf-8"));
+
+    await this.persistQueue;
+  }
+
+  private serialize(): PersistedData {
+    return {
+      version: PERSISTENCE_VERSION,
+      users: Array.from(this.users.values()).map((user) => ({ ...user })),
+      templates: Array.from(this.templates.values()).map((template) =>
+        this.cloneTemplate(template),
+      ),
+      carts: Array.from(this.carts.values()).map((cart) => this.cloneCart(cart)),
+      orders: Array.from(this.orders.values()).map((order) =>
+        this.cloneOrder(order),
+      ),
+    };
+  }
+
+  private loadFromDisk(): void {
+    if (!existsSync(this.dataFile)) {
+      return;
+    }
+
+    try {
+      const raw = readFileSync(this.dataFile, "utf-8");
+      if (!raw.trim()) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<PersistedData>;
+
+      if (
+        parsed.version !== undefined &&
+        parsed.version !== PERSISTENCE_VERSION
+      ) {
+        console.warn(
+          `[storage] Ignoring persisted data due to version mismatch (found ${parsed.version}, expected ${PERSISTENCE_VERSION})`,
+        );
+        return;
+      }
+
+      if (Array.isArray(parsed.users)) {
+        parsed.users.forEach((user) => {
+          if (user.id) {
+            this.users.set(user.id, user);
+          }
+        });
+      }
+
+      if (Array.isArray(parsed.templates)) {
+        parsed.templates.forEach((template) => {
+          if (template.id) {
+            this.templates.set(template.id, {
+              ...template,
+              galleryImages: [...template.galleryImages],
+              tags: [...template.tags],
+              features: [...template.features],
+              videoUrl: template.videoUrl ?? null,
+              liveDemoUrl: template.liveDemoUrl ?? null,
+              figmaUrl: template.figmaUrl ?? null,
+            });
+          }
+        });
+      }
+
+      if (Array.isArray(parsed.carts)) {
+        parsed.carts.forEach((cart) => {
+          if (cart.id) {
+            this.carts.set(cart.id, {
+              id: cart.id,
+              subtotal: cart.subtotal,
+              items: cart.items.map((item) => ({
+                ...item,
+                template: { ...item.template },
+              })),
+            });
+          }
+        });
+      }
+
+      if (Array.isArray(parsed.orders)) {
+        parsed.orders.forEach((order) => {
+          if (order.id) {
+            this.orders.set(order.id, {
+              ...order,
+              items: order.items.map((item) => ({
+                ...item,
+                template: { ...item.template },
+              })),
+            });
+          }
+        });
+      }
+    } catch (error) {
+      console.error("[storage] Failed to load persisted data:", error);
     }
   }
+
+  private markDirty(): void {
+    if (this.isBootstrapping) {
+      this.bootstrapDirty = true;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Seeding helpers
+  // ---------------------------------------------------------------------------
 
   private ensureAdminUser(): void {
     const hasAdmin = Array.from(this.users.values()).some(
@@ -654,12 +839,12 @@ export class MemStorage implements IStorage {
     );
 
     if (!hasAdmin) {
-      const id = randomUUID();
-      this.users.set(id, {
-        id,
+      const admin = this.createUserRecord({
         username: "admin",
-        password: this.hashPassword("admin123"),
+        password: "admin123",
       });
+      this.users.set(admin.id, admin);
+      this.markDirty();
     }
   }
 
@@ -788,7 +973,7 @@ export class MemStorage implements IStorage {
     ];
 
     templates.forEach((template) => {
-      void this.createTemplate(template);
+      this.insertTemplate(template);
     });
   }
 
@@ -852,6 +1037,7 @@ export class MemStorage implements IStorage {
 
     this.orders.set(orderOne.id, orderOne);
     this.orders.set(orderTwo.id, orderTwo);
+    this.markDirty();
   }
 }
 

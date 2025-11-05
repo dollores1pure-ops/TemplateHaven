@@ -19,6 +19,14 @@ export interface TemplateListParams {
   sort?: "newest" | "oldest" | "priceAsc" | "priceDesc" | "title";
 }
 
+export interface UploadedFile {
+  url: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  type: "image" | "video" | "other";
+}
+
 function buildQueryString(params: Record<string, unknown>): string {
   const searchParams = new URLSearchParams();
 
@@ -205,4 +213,43 @@ export async function fetchOrders(): Promise<{
   }
 
   return (await res.json()) as { data: Order[]; meta: { total: number } };
+}
+
+export async function uploadMedia(files: File[]): Promise<UploadedFile[]> {
+  if (!files.length) {
+    return [];
+  }
+
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append("files", file, file.name);
+  });
+
+  const res = await fetch("/api/uploads", {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  });
+
+  let payload: unknown = null;
+  try {
+    payload = await res.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!res.ok) {
+    const message =
+      payload && typeof (payload as { message?: unknown }).message === "string"
+        ? ((payload as { message?: string }).message as string)
+        : `Failed to upload files (${res.status})`;
+    throw new Error(message);
+  }
+
+  const filesPayload =
+    payload && typeof payload === "object" && payload !== null
+      ? (payload as { files?: UploadedFile[] }).files
+      : undefined;
+
+  return Array.isArray(filesPayload) ? filesPayload : [];
 }
