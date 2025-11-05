@@ -14,10 +14,13 @@ import {
   fetchAdminStats,
   fetchCurrentUser,
   fetchTemplates,
+  fetchAdminUsers,
   login,
   logout,
   updateTemplate,
+  updateAdminUserPremium,
 } from "@/lib/api";
+import type { UserAccount } from "@/lib/api";
 import type { AdminStats, Template } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -28,6 +31,7 @@ export default function Admin() {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(
     null,
   );
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   const currentUserQuery = useQuery({
     queryKey: ["currentUser"],
@@ -35,22 +39,40 @@ export default function Admin() {
     retry: false,
   });
 
-  const isAuthenticated = Boolean(currentUserQuery.data);
+  const currentUser = currentUserQuery.data ?? null;
+  const isAuthenticated = Boolean(currentUser);
+  const isAdmin = currentUser?.role === "admin";
 
   const templatesQuery = useQuery({
     queryKey: ["adminTemplates"],
     queryFn: () => fetchTemplates({ status: "all" }),
-    enabled: isAuthenticated,
+    enabled: isAdmin,
   });
 
   const statsQuery = useQuery({
     queryKey: ["adminStats"],
     queryFn: fetchAdminStats,
-    enabled: isAuthenticated,
+    enabled: isAdmin,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["adminUsers"],
+    queryFn: fetchAdminUsers,
+    enabled: isAdmin,
   });
 
   useEffect(() => {
-    if (!isAuthenticated || typeof window === "undefined") {
+    if (usersQuery.isError) {
+      toast({
+        title: "Failed to load users",
+        description: "We couldn't load user accounts. Please refresh and try again.",
+        variant: "destructive",
+      });
+    }
+  }, [usersQuery.isError, toast]);
+
+  useEffect(() => {
+    if (!isAdmin || typeof window === "undefined") {
       return;
     }
 
@@ -81,7 +103,7 @@ export default function Admin() {
       eventSource.removeEventListener("error", errorListener);
       eventSource.close();
     };
-  }, [isAuthenticated, queryClient]);
+  }, [isAdmin, queryClient]);
 
   const loginMutation = useMutation({
     mutationFn: ({
@@ -116,6 +138,7 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       queryClient.removeQueries({ queryKey: ["adminTemplates"] });
       queryClient.removeQueries({ queryKey: ["adminStats"] });
+      queryClient.removeQueries({ queryKey: ["adminUsers"] });
       setShowProductForm(false);
       setSelectedTemplate(null);
     },
@@ -195,6 +218,37 @@ export default function Admin() {
     },
   });
 
+  const updatePremiumMutation = useMutation({
+    mutationFn: ({
+      userId,
+      isPremium,
+    }: {
+      userId: string;
+      isPremium: boolean;
+    }) => updateAdminUserPremium(userId, { isPremium }),
+    onMutate: (variables) => {
+      setPendingUserId(variables.userId);
+    },
+    onSuccess: (user) => {
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+      toast({
+        title: user.isPremium ? "Premium granted" : "Premium removed",
+        description: `${user.username} now has ${user.isPremium ? "premium" : "standard"} access.`,
+      });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update premium status.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setPendingUserId(null);
+    },
+  });
+
   const handleLogin = ({
     username,
     password,
@@ -235,6 +289,13 @@ export default function Admin() {
     await saveTemplateMutation.mutateAsync(values);
   };
 
+  const handleTogglePremium = (user: UserAccount) => {
+    updatePremiumMutation.mutate({
+      userId: user.id,
+      isPremium: !user.isPremium,
+    });
+  };
+
   if (!isAuthenticated) {
     return (
       <>
@@ -245,6 +306,28 @@ export default function Admin() {
           onLogin={handleLogin}
           isSubmitting={loginMutation.isPending}
         />
+      </>
+    );
+  }
+
+  if (isAuthenticated && !isAdmin) {
+    return (
+      <>
+        <div className="fixed top-4 right-4 z-50">
+          <ThemeToggle />
+        </div>
+        <div className="min-h-screen flex flex-col items-center justify-center gap-6 px-4 text-center">
+          <div className="space-y-4 max-w-md">
+            <h2 className="text-3xl font-display font-bold">Admin access required</h2>
+            <p className="text-muted-foreground">
+              You are signed in as <span className="font-semibold">{currentUser?.username}</span>,
+              but this account does not have administrator permissions.
+            </p>
+          </div>
+          <Button onClick={handleLogout} variant="outline">
+            Return home
+          </Button>
+        </div>
       </>
     );
   }
@@ -290,6 +373,9 @@ export default function Admin() {
         onEditTemplate={handleEditTemplate}
         onDeleteTemplate={handleDeleteTemplate}
         onLogout={handleLogout}
+        users={usersQuery.data ?? []}
+        onTogglePremium={handleTogglePremium}
+        updatingUserId={pendingUserId}
       />
     </>
   );

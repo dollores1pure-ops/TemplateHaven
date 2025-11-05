@@ -4,17 +4,15 @@ import {
   type CartItem,
   type InsertCartItem,
   type InsertTemplate,
-  type InsertUser,
   type Order,
   type Template,
   type TemplateCategory,
   type TemplateStatus,
   type TemplateSummary,
   type UpdateTemplate,
-  type User,
   templateStatusSchema,
 } from "@shared/schema";
-import { randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -27,7 +25,6 @@ const PERSISTENCE_VERSION = 1;
 
 interface PersistedData {
   version: number;
-  users: User[];
   templates: Template[];
   carts: Cart[];
   orders: Order[];
@@ -50,15 +47,6 @@ export interface TemplateFilters {
 }
 
 export interface IStorage {
-  // Users
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  verifyUserCredentials(
-    username: string,
-    password: string,
-  ): Promise<User | undefined>;
-
   // Templates
   listTemplates(filters?: TemplateFilters): Promise<Template[]>;
   getTemplate(id: string): Promise<Template | undefined>;
@@ -91,7 +79,6 @@ export interface IStorage {
 }
 
 export class MemStorage implements IStorage {
-  private readonly users = new Map<string, User>();
   private readonly templates = new Map<string, Template>();
   private readonly carts = new Map<string, Cart>();
   private readonly orders = new Map<string, Order>();
@@ -116,7 +103,6 @@ export class MemStorage implements IStorage {
     this.events.setMaxListeners(50);
 
     this.loadFromDisk();
-    this.ensureAdminUser();
 
     if (this.templates.size === 0) {
       this.seedTemplates();
@@ -134,78 +120,6 @@ export class MemStorage implements IStorage {
     }
 
     this.notifyAdminStatsChanged();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Users
-  // ---------------------------------------------------------------------------
-
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const normalized = username.toLowerCase();
-    return Array.from(this.users.values()).find(
-      (user) => user.username.toLowerCase() === normalized,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const existing = await this.getUserByUsername(insertUser.username);
-    if (existing) {
-      throw new Error("Username already exists");
-    }
-
-    const user = this.createUserRecord(insertUser);
-    this.users.set(user.id, user);
-    this.markDirty();
-    await this.persist();
-    return { ...user };
-  }
-
-  async verifyUserCredentials(
-    username: string,
-    password: string,
-  ): Promise<User | undefined> {
-    const user = await this.getUserByUsername(username);
-    if (!user) {
-      return undefined;
-    }
-
-    const isValid = this.verifyPassword(password, user.password);
-    return isValid ? { ...user } : undefined;
-  }
-
-  private createUserRecord(insertUser: InsertUser): User {
-    const id = randomUUID();
-    return {
-      id,
-      username: insertUser.username,
-      password: this.hashPassword(insertUser.password),
-    };
-  }
-
-  private hashPassword(password: string): string {
-    const salt = randomUUID().replace(/-/g, "");
-    const hashedBuffer = scryptSync(password, salt, 64);
-    return `${salt}:${hashedBuffer.toString("hex")}`;
-  }
-
-  private verifyPassword(password: string, stored: string): boolean {
-    const [salt, key] = stored.split(":");
-    if (!salt || !key) {
-      return false;
-    }
-
-    const hashedBuffer = scryptSync(password, salt, 64);
-    const keyBuffer = Buffer.from(key, "hex");
-
-    if (hashedBuffer.length !== keyBuffer.length) {
-      return false;
-    }
-
-    return timingSafeEqual(hashedBuffer, keyBuffer);
   }
 
   // ---------------------------------------------------------------------------
@@ -753,7 +667,6 @@ export class MemStorage implements IStorage {
   private serialize(): PersistedData {
     return {
       version: PERSISTENCE_VERSION,
-      users: Array.from(this.users.values()).map((user) => ({ ...user })),
       templates: Array.from(this.templates.values()).map((template) =>
         this.cloneTemplate(template),
       ),
@@ -785,14 +698,6 @@ export class MemStorage implements IStorage {
           `[storage] Ignoring persisted data due to version mismatch (found ${parsed.version}, expected ${PERSISTENCE_VERSION})`,
         );
         return;
-      }
-
-      if (Array.isArray(parsed.users)) {
-        parsed.users.forEach((user) => {
-          if (user.id) {
-            this.users.set(user.id, user);
-          }
-        });
       }
 
       if (Array.isArray(parsed.templates)) {
@@ -853,21 +758,6 @@ export class MemStorage implements IStorage {
   // ---------------------------------------------------------------------------
   // Seeding helpers
   // ---------------------------------------------------------------------------
-
-  private ensureAdminUser(): void {
-    const hasAdmin = Array.from(this.users.values()).some(
-      (user) => user.username.toLowerCase() === "admin",
-    );
-
-    if (!hasAdmin) {
-      const admin = this.createUserRecord({
-        username: "admin",
-        password: "admin123",
-      });
-      this.users.set(admin.id, admin);
-      this.markDirty();
-    }
-  }
 
   private seedTemplates(): void {
     const templates: InsertTemplate[] = [

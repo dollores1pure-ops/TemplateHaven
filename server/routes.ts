@@ -15,11 +15,22 @@ import {
   adminStatsSchema,
   insertCartItemSchema,
   insertTemplateSchema,
+  insertUserSchema,
   templateCategories,
   templateStatuses,
   updateTemplateSchema,
+  updateUserPremiumSchema,
 } from "@shared/schema";
 import { storage, type TemplateFilters, type TemplateSort } from "./storage";
+import {
+  ensureAdminUser,
+  getUserById,
+  listUsers,
+  type PublicUser,
+  registerUser,
+  updateUserPremium,
+  verifyUserCredentials,
+} from "./services/user-service";
 
 type CheckoutOrder = Awaited<ReturnType<typeof storage.createOrderFromCart>>;
 
@@ -74,8 +85,19 @@ const updateTemplatePayloadSchema = updateTemplateSchema
   });
 
 const loginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
+  username: z.string().trim().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
+});
+
+const registerSchema = insertUserSchema.extend({
+  username: z
+    .string()
+    .trim()
+    .min(3, "Username must be at least 3 characters")
+    .max(50, "Username must be at most 50 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters"),
 });
 
 const updateCartItemSchema = z.object({
@@ -178,6 +200,21 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
   next();
 };
 
+const requireAdmin: express.RequestHandler = (req, res, next) => {
+  if (!req.session || !req.session.userId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  getUserById(req.session.userId)
+    .then((user) => {
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      next();
+    })
+    .catch(next);
+};
+
 async function ensureCart(req: Request) {
   const currentCartId = req.session.cartId;
   const cart = await storage.getOrCreateCart(currentCartId);
@@ -235,7 +272,21 @@ function handleZodError(res: Response, error: z.ZodError) {
   res.status(400).json({ message: "Invalid request", issues });
 }
 
+function serializeUser(user: PublicUser) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    isPremium: user.isPremium,
+    premiumUntil: user.premiumUntil ? user.premiumUntil.toISOString() : null,
+    createdAt: user.createdAt ? user.createdAt.toISOString() : null,
+    updatedAt: user.updatedAt ? user.updatedAt.toISOString() : null,
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  await ensureAdminUser();
+
   const apiRouter = express.Router();
 
   app.use(
@@ -247,29 +298,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "ok" });
   });
 
-  apiRouter.post(
-    "/auth/login",
-    asyncHandler(async (req, res) => {
-      const parsed = loginSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return handleZodError(res, parsed.error);
-      }
+    apiRouter.post(
+      "/auth/register",
+      asyncHandler(async (req, res) => {
+        const parsed = registerSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return handleZodError(res, parsed.error);
+        }
 
-      const user = await storage.verifyUserCredentials(
-        parsed.data.username,
-        parsed.data.password,
-      );
+        try {
+          const user = await registerUser(parsed.data);
+          req.session.userId = user.id;
+          res.status(201).json(serializeUser(user));
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.toLowerCase().includes("exists")
+          ) {
+            return res.status(409).json({ message: error.message });
+          }
+          throw error;
+        }
+      }),
+    );
 
-      if (!user) {
-        return res
-          .status(401)
-          .json({ message: "Invalid username or password" });
-      }
+    apiRouter.post(
+      "/auth/login",
+      asyncHandler(async (req, res) => {
+        const parsed = loginSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return handleZodError(res, parsed.error);
+        }
 
-      req.session.userId = user.id;
-      res.json({ id: user.id, username: user.username });
-    }),
-  );
+        const user = await verifyUserCredentials(
+          parsed.data.username,
+          parsed.data.password,
+        );
+
+        if (!user) {
+          return res
+            .status(401)
+            .json({ message: "Invalid username or password" });
+        }
+
+        req.session.userId = user.id;
+        res.json(serializeUser(user));
+      }),
+    );
 
   apiRouter.post(
     "/auth/logout",
@@ -298,12 +373,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Unauthenticated" });
       }
 
-      const user = await storage.getUser(req.session.userId);
-      if (!user) {
-        return res.status(401).json({ message: "Unauthenticated" });
-      }
+        const user = await getUserById(req.session.userId);
+        if (!user) {
+          return res.status(401).json({ message: "Unauthenticated" });
+        }
 
-      res.json({ id: user.id, username: user.username });
+        res.json(serializeUser(user));
     }),
   );
 
@@ -655,20 +730,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }),
     );
 
-  apiRouter.get(
-    "/admin/stats",
-    requireAuth,
-    asyncHandler(async (_req, res) => {
-      const stats = await storage.getAdminStats();
-      // ensure schema shape
-      const parsed = adminStatsSchema.parse(stats);
-      res.json(parsed);
-    }),
-  );
+    apiRouter.get(
+      "/admin/users",
+      requireAdmin,
+      asyncHandler(async (_req, res) => {
+        const users = await listUsers();
+        res.json({ data: users.map(serializeUser) });
+      }),
+    );
+
+    apiRouter.patch(
+      "/admin/users/:userId/premium",
+      requireAdmin,
+      asyncHandler(async (req, res) => {
+        const parsed = updateUserPremiumSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return handleZodError(res, parsed.error);
+        }
+
+        const premiumUntilValue = parsed.data.premiumUntil
+          ? new Date(parsed.data.premiumUntil)
+          : null;
+
+        if (
+          premiumUntilValue !== null &&
+          Number.isNaN(premiumUntilValue.getTime())
+        ) {
+          return res.status(400).json({ message: "Invalid premiumUntil value" });
+        }
+
+        const user = await updateUserPremium(req.params.userId, {
+          isPremium: parsed.data.isPremium,
+          premiumUntil: premiumUntilValue ?? undefined,
+        });
+
+        res.json(serializeUser(user));
+      }),
+    );
+
+    apiRouter.get(
+      "/admin/stats",
+      requireAdmin,
+      asyncHandler(async (_req, res) => {
+        const stats = await storage.getAdminStats();
+        // ensure schema shape
+        const parsed = adminStatsSchema.parse(stats);
+        res.json(parsed);
+      }),
+    );
 
   apiRouter.get(
     "/admin/stats/stream",
-    requireAuth,
+      requireAdmin,
     asyncHandler(async (req, res) => {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -712,7 +825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   apiRouter.get(
     "/admin/orders",
-    requireAuth,
+      requireAdmin,
     asyncHandler(async (_req, res) => {
       const orders = await storage.listOrders();
       res.json({ data: orders, meta: { total: orders.length } });

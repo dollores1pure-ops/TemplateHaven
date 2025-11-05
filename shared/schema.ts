@@ -1,15 +1,39 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  mysqlTable,
+  text,
+  timestamp,
+  varchar,
+  uniqueIndex,
+} from "drizzle-orm/mysql-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-});
+export const users = mysqlTable(
+  "users",
+  {
+    id: varchar("id", { length: 36 })
+      .primaryKey()
+      .notNull()
+      .default(sql`(uuid())`),
+    username: varchar("username", { length: 191 }).notNull(),
+    password: text("password").notNull(),
+    role: varchar("role", { length: 32 }).notNull().default("user"),
+    isPremium: boolean("is_premium").notNull().default(false),
+    premiumUntil: timestamp("premium_until", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`)
+      .onUpdateNow(),
+  },
+  (users) => ({
+    usernameIdx: uniqueIndex("users_username_idx").on(users.username),
+  }),
+);
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -18,6 +42,16 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+
+export const updateUserPremiumSchema = z.object({
+  isPremium: z.boolean(),
+  premiumUntil: z
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional(),
+});
 
 export const templateCategories = [
   "ecommerce",
