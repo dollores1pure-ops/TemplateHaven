@@ -1,8 +1,12 @@
-import { ShoppingCart, Search, Menu, LogIn } from "lucide-react";
+import { ShoppingCart, Search, Menu, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchCurrentUser, logout } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 interface HeaderProps {
   cartItemCount?: number;
@@ -19,7 +23,35 @@ export default function Header({
   onSearchChange,
   onNavigateHome,
 }: HeaderProps) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [searchOpen, setSearchOpen] = useState(false);
+
+  const { data: currentUser } = useQuery({
+    queryKey: ["currentUser"],
+    queryFn: fetchCurrentUser,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: logout,
+    onSuccess: () => {
+      queryClient.setQueryData(["currentUser"], null);
+      toast({ title: "Signed out", description: "Come back soon!" });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Logout failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleLogout = () => {
+    logoutMutation.mutate();
+  };
 
   useEffect(() => {
     if (searchValue && searchValue.trim().length > 0) {
@@ -64,30 +96,30 @@ export default function Header({
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
-            {searchOpen ? (
-              <div className="w-64 animate-in slide-in-from-right">
-                <Input
-                  type="search"
-                  placeholder="Search templates..."
-                  className="w-full"
-                  data-testid="input-search"
-                  value={searchValue ?? ""}
-                  onChange={(event) => onSearchChange?.(event.target.value)}
-                  autoFocus
-                  onBlur={() => setSearchOpen(false)}
-                />
-              </div>
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSearchOpen(true)}
-                data-testid="button-search"
-              >
-                <Search className="h-5 w-5" />
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {searchOpen ? (
+                <div className="w-64 animate-in slide-in-from-right">
+                  <Input
+                    type="search"
+                    placeholder="Search templates..."
+                    className="w-full"
+                    data-testid="input-search"
+                    value={searchValue ?? ""}
+                    onChange={(event) => onSearchChange?.(event.target.value)}
+                    autoFocus
+                    onBlur={() => setSearchOpen(false)}
+                  />
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setSearchOpen(true)}
+                  data-testid="button-search"
+                >
+                  <Search className="h-5 w-5" />
+                </Button>
+              )}
 
               <Button
                 variant="ghost"
@@ -107,33 +139,76 @@ export default function Header({
                 )}
               </Button>
 
-              <div className="hidden md:flex items-center gap-2">
-                <Link href="/login" data-testid="link-login">
-                  <Button variant="ghost" size="sm" data-testid="button-login">
-                    Log in
-                  </Button>
-                </Link>
-                <Link href="/signup" data-testid="link-signup">
-                  <Button size="sm" data-testid="button-signup">
-                    Sign up
-                  </Button>
-                </Link>
-              </div>
+              {currentUser ? (
+                <>
+                  <div className="hidden md:flex items-center gap-3">
+                    <div className="flex items-center gap-2 rounded-full border px-3 py-1">
+                      <span className="text-sm font-medium">
+                        {currentUser.username}
+                      </span>
+                      {currentUser.isPremium && (
+                        <Badge
+                          variant="default"
+                          className="bg-amber-500 text-amber-50"
+                        >
+                          Premium
+                        </Badge>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleLogout}
+                      disabled={logoutMutation.isPending}
+                      data-testid="button-logout"
+                    >
+                      {logoutMutation.isPending ? "Logging out..." : "Logout"}
+                    </Button>
+                  </div>
 
-              <Link
-                href="/login"
-                data-testid="link-login-mobile"
-                className="md:hidden"
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Log in"
-                  data-testid="button-login-mobile"
-                >
-                  <LogIn className="h-5 w-5" />
-                </Button>
-              </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="md:hidden"
+                    aria-label="Log out"
+                    onClick={handleLogout}
+                    disabled={logoutMutation.isPending}
+                    data-testid="button-logout-mobile"
+                  >
+                    <LogOut className="h-5 w-5" />
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="hidden md:flex items-center gap-2">
+                    <Link href="/login" data-testid="link-login">
+                      <Button variant="ghost" size="sm" data-testid="button-login">
+                        Log in
+                      </Button>
+                    </Link>
+                    <Link href="/signup" data-testid="link-signup">
+                      <Button size="sm" data-testid="button-signup">
+                        Sign up
+                      </Button>
+                    </Link>
+                  </div>
+
+                  <Link
+                    href="/login"
+                    data-testid="link-login-mobile"
+                    className="md:hidden"
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Log in"
+                      data-testid="button-login-mobile"
+                    >
+                      <LogIn className="h-5 w-5" />
+                    </Button>
+                  </Link>
+                </>
+              )}
 
               <Button
                 variant="ghost"
@@ -143,7 +218,7 @@ export default function Header({
               >
                 <Menu className="h-5 w-5" />
               </Button>
-          </div>
+            </div>
         </div>
       </div>
     </header>

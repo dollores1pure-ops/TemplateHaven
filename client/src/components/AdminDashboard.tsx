@@ -7,9 +7,11 @@ import {
   Eye,
   TrendingUp,
   LogOut,
+  Crown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Template, AdminStats } from "@shared/schema";
+import type { UserAccount } from "@/lib/api";
 
 interface AdminDashboardProps {
   onAddProduct?: () => void;
@@ -18,6 +20,9 @@ interface AdminDashboardProps {
   onLogout?: () => void;
   products?: Template[];
   stats?: AdminStats | null;
+  users?: UserAccount[];
+  onTogglePremium?: (user: UserAccount) => void;
+  updatingUserId?: string | null;
 }
 
 const categoryLabels: Record<string, string> = {
@@ -44,6 +49,9 @@ export default function AdminDashboard({
   onLogout,
   products = [],
   stats,
+  users = [],
+  onTogglePremium,
+  updatingUserId,
 }: AdminDashboardProps) {
   const statCards = [
     {
@@ -73,6 +81,22 @@ export default function AdminDashboard({
       color: "text-purple-600",
     },
   ];
+
+  const formatPremiumUntil = (value: string | null) => {
+    if (!value) {
+      return "—";
+    }
+
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      }).format(new Date(value));
+    } catch {
+      return "—";
+    }
+  };
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -164,8 +188,7 @@ export default function AdminDashboard({
                             variant="secondary"
                             data-testid={`badge-category-${product.id}`}
                           >
-                            {categoryLabels[product.category] ??
-                              product.category}
+                            {categoryLabels[product.category] ?? product.category}
                           </Badge>
                           <Badge
                             variant={
@@ -207,6 +230,72 @@ export default function AdminDashboard({
             </div>
           </CardContent>
         </Card>
+
+        <Card className="mt-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Crown className="h-5 w-5 text-amber-500" />
+              User Premium Access
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {users.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No registered users yet.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-4 font-medium">Username</th>
+                      <th className="py-2 pr-4 font-medium">Role</th>
+                      <th className="py-2 pr-4 font-medium">Premium</th>
+                      <th className="py-2 pr-4 font-medium">Valid Until</th>
+                      <th className="py-2 pr-0 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((user) => (
+                      <tr
+                        key={user.id}
+                        className="border-t border-border/60"
+                        data-testid={`admin-user-row-${user.id}`}
+                      >
+                        <td className="py-3 pr-4 font-medium">{user.username}</td>
+                        <td className="py-3 pr-4 capitalize">{user.role}</td>
+                        <td className="py-3 pr-4">
+                          <Badge
+                            variant={user.isPremium ? "default" : "outline"}
+                            className={
+                              user.isPremium ? "bg-amber-500 text-amber-50" : ""
+                            }
+                          >
+                            {user.isPremium ? "Active" : "Inactive"}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 text-muted-foreground">
+                          {formatPremiumUntil(user.premiumUntil)}
+                        </td>
+                        <td className="py-3 pr-0 text-right">
+                          <Button
+                            size="sm"
+                            variant={user.isPremium ? "outline" : "default"}
+                            onClick={() => onTogglePremium?.(user)}
+                            disabled={updatingUserId === user.id}
+                          >
+                            {user.isPremium ? "Revoke" : "Grant"}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
       </div>
     </div>
   );

@@ -19,6 +19,16 @@ export interface TemplateListParams {
   sort?: "newest" | "oldest" | "priceAsc" | "priceDesc" | "title";
 }
 
+export interface UserAccount {
+  id: string;
+  username: string;
+  role: string;
+  isPremium: boolean;
+  premiumUntil: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface UploadedFile {
   url: string;
   originalName: string;
@@ -99,7 +109,15 @@ export async function login(username: string, password: string) {
     username,
     password,
   });
-  return (await res.json()) as { id: string; username: string };
+  return (await res.json()) as UserAccount;
+}
+
+export async function register(username: string, password: string) {
+  const res = await apiRequest("POST", "/api/auth/register", {
+    username,
+    password,
+  });
+  return (await res.json()) as UserAccount;
 }
 
 export async function logout() {
@@ -119,7 +137,7 @@ export async function fetchCurrentUser() {
     throw new Error(`Failed to fetch current user (${res.status})`);
   }
 
-  return (await res.json()) as { id: string; username: string };
+  return (await res.json()) as UserAccount;
 }
 
 export async function fetchCart(): Promise<Cart> {
@@ -189,6 +207,10 @@ export async function fetchAdminStats(): Promise<AdminStats> {
     throw new Error("Unauthorized");
   }
 
+  if (res.status === 403) {
+    throw new Error("Unauthorized");
+  }
+
   if (!res.ok) {
     throw new Error(`Failed to fetch admin stats (${res.status})`);
   }
@@ -213,6 +235,49 @@ export async function fetchOrders(): Promise<{
   }
 
   return (await res.json()) as { data: Order[]; meta: { total: number } };
+}
+
+export async function fetchAdminUsers(): Promise<UserAccount[]> {
+  const res = await fetch("/api/admin/users", {
+    credentials: "include",
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Unauthorized");
+  }
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch users (${res.status})`);
+  }
+
+  const payload = (await res.json()) as { data: UserAccount[] };
+  return payload.data ?? [];
+}
+
+export async function updateAdminUserPremium(
+  userId: string,
+  body: { isPremium: boolean; premiumUntil?: string | null },
+): Promise<UserAccount> {
+  const res = await apiRequest(
+    "PATCH",
+    `/api/admin/users/${userId}/premium`,
+    body,
+  );
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Unauthorized");
+  }
+
+  if (!res.ok) {
+    const errorPayload = await res.json().catch(() => null);
+    const message =
+      errorPayload && typeof errorPayload === "object" && errorPayload !== null
+        ? (errorPayload as { message?: string }).message
+        : undefined;
+    throw new Error(message ?? `Failed to update premium (${res.status})`);
+  }
+
+  return (await res.json()) as UserAccount;
 }
 
 export async function uploadMedia(files: File[]): Promise<UploadedFile[]> {
