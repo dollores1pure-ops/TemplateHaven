@@ -18,6 +18,7 @@ import { randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 
 const DEFAULT_TEMPLATE_IMAGE =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1600&q=80";
@@ -84,6 +85,9 @@ export interface IStorage {
   createOrderFromCart(cartId: string): Promise<Order>;
   listOrders(): Promise<Order[]>;
   getAdminStats(): Promise<AdminStats>;
+
+  // Events
+  onAdminStatsChange(listener: (stats: AdminStats) => void): () => void;
 }
 
 export class MemStorage implements IStorage {
@@ -94,6 +98,8 @@ export class MemStorage implements IStorage {
 
   private readonly dataDir: string;
   private readonly dataFile: string;
+
+  private readonly events = new EventEmitter();
 
   private isBootstrapping = true;
   private bootstrapDirty = false;
@@ -106,6 +112,8 @@ export class MemStorage implements IStorage {
     );
     this.dataFile = path.join(this.dataDir, "storage.json");
     mkdirSync(this.dataDir, { recursive: true });
+
+    this.events.setMaxListeners(50);
 
     this.loadFromDisk();
     this.ensureAdminUser();
@@ -124,6 +132,8 @@ export class MemStorage implements IStorage {
       void this.persist();
       this.bootstrapDirty = false;
     }
+
+    this.notifyAdminStatsChanged();
   }
 
   // ---------------------------------------------------------------------------
@@ -227,6 +237,7 @@ export class MemStorage implements IStorage {
   async createTemplate(data: InsertTemplate): Promise<Template> {
     const template = this.insertTemplate(data);
     await this.persist();
+    this.notifyAdminStatsChanged();
     return this.cloneTemplate(template);
   }
 
@@ -292,6 +303,7 @@ export class MemStorage implements IStorage {
     this.templates.set(id, merged);
     this.markDirty();
     await this.persist();
+    this.notifyAdminStatsChanged();
     return this.cloneTemplate(merged);
   }
 
@@ -300,6 +312,7 @@ export class MemStorage implements IStorage {
     if (deleted) {
       this.markDirty();
       await this.persist();
+      this.notifyAdminStatsChanged();
     }
     return deleted;
   }
@@ -663,6 +676,7 @@ export class MemStorage implements IStorage {
 
     this.markDirty();
     await this.persist();
+    this.notifyAdminStatsChanged();
     return this.cloneOrder(order);
   }
 
@@ -696,6 +710,13 @@ export class MemStorage implements IStorage {
       totalOrders: orders.length,
       totalRevenue: Math.round(totalRevenue * 100) / 100,
       recentOrders,
+    };
+  }
+
+  onAdminStatsChange(listener: (stats: AdminStats) => void): () => void {
+    this.events.on("adminStats", listener);
+    return () => {
+      this.events.off("adminStats", listener);
     };
   }
 
@@ -975,6 +996,8 @@ export class MemStorage implements IStorage {
     templates.forEach((template) => {
       this.insertTemplate(template);
     });
+
+    this.notifyAdminStatsChanged();
   }
 
   private seedOrders(): void {
@@ -1038,6 +1061,18 @@ export class MemStorage implements IStorage {
     this.orders.set(orderOne.id, orderOne);
     this.orders.set(orderTwo.id, orderTwo);
     this.markDirty();
+
+    this.notifyAdminStatsChanged();
+  }
+
+  private notifyAdminStatsChanged(): void {
+    void this.getAdminStats()
+      .then((stats) => {
+        this.events.emit("adminStats", stats);
+      })
+      .catch((error) => {
+        console.error("[storage] Failed to emit admin stats update:", error);
+      });
   }
 }
 
