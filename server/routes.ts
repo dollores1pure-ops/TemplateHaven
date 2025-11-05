@@ -667,6 +667,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   apiRouter.get(
+    "/admin/stats/stream",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      res.write("retry: 5000\n\n");
+
+      const sendStats = async () => {
+        const stats = await storage.getAdminStats();
+        try {
+          res.write(`data: ${JSON.stringify(stats)}\n\n`);
+        } catch (error) {
+          console.error("[routes] Failed to send admin stats event:", error);
+        }
+      };
+
+      await sendStats();
+
+      const unsubscribe = storage.onAdminStatsChange((stats) => {
+        try {
+          res.write(`data: ${JSON.stringify(stats)}\n\n`);
+        } catch (error) {
+          console.error("[routes] Failed to send admin stats event:", error);
+        }
+      });
+
+      const keepAlive = setInterval(() => {
+        if (res.writableEnded) {
+          return;
+        }
+        res.write(":keep-alive\n\n");
+      }, 25000);
+
+      req.on("close", () => {
+        clearInterval(keepAlive);
+        unsubscribe();
+      });
+    }),
+  );
+
+  apiRouter.get(
     "/admin/orders",
     requireAuth,
     asyncHandler(async (_req, res) => {

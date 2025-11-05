@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import AdminLogin from "@/components/AdminLogin";
 import AdminDashboard from "@/components/AdminDashboard";
@@ -18,7 +18,7 @@ import {
   logout,
   updateTemplate,
 } from "@/lib/api";
-import type { Template } from "@shared/schema";
+import type { AdminStats, Template } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Admin() {
@@ -48,6 +48,40 @@ export default function Admin() {
     queryFn: fetchAdminStats,
     enabled: isAuthenticated,
   });
+
+  useEffect(() => {
+    if (!isAuthenticated || typeof window === "undefined") {
+      return;
+    }
+
+    const eventSource = new EventSource("/api/admin/stats/stream");
+
+    const messageListener = (event: Event) => {
+      if (!(event instanceof MessageEvent)) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(event.data) as AdminStats;
+        queryClient.setQueryData(["adminStats"], payload);
+      } catch (error) {
+        console.error("[Admin] Failed to parse admin stats event", error);
+      }
+    };
+
+    const errorListener = () => {
+      void queryClient.invalidateQueries({ queryKey: ["adminStats"] });
+    };
+
+    eventSource.addEventListener("message", messageListener);
+    eventSource.addEventListener("error", errorListener);
+
+    return () => {
+      eventSource.removeEventListener("message", messageListener);
+      eventSource.removeEventListener("error", errorListener);
+      eventSource.close();
+    };
+  }, [isAuthenticated, queryClient]);
 
   const loginMutation = useMutation({
     mutationFn: ({
