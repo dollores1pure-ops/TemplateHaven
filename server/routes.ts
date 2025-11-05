@@ -7,6 +7,10 @@ import express, {
 import Stripe from "stripe";
 import { createServer, type Server } from "http";
 import { z } from "zod";
+import multer from "multer";
+import path from "node:path";
+import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   adminStatsSchema,
   insertCartItemSchema,
@@ -82,6 +86,78 @@ const checkoutCompletionSchema = z.object({
   sessionId: z.string().trim().min(1, "sessionId is required"),
 });
 
+const uploadsDirectory = path.resolve(
+  process.cwd(),
+  process.env.UPLOADS_DIR ?? "uploads",
+);
+mkdirSync(uploadsDirectory, { recursive: true });
+
+const maxUploadSizeMb = Number(process.env.MAX_UPLOAD_SIZE_MB ?? 25);
+const uploadFileSizeLimit =
+  Number.isFinite(maxUploadSizeMb) && maxUploadSizeMb > 0
+    ? maxUploadSizeMb * 1024 * 1024
+    : 25 * 1024 * 1024;
+
+const maxUploadFilesEnv = Number(process.env.MAX_UPLOAD_FILES ?? 10);
+const uploadFileLimit =
+  Number.isFinite(maxUploadFilesEnv) && maxUploadFilesEnv > 0
+    ? Math.floor(maxUploadFilesEnv)
+    : 10;
+
+const uploadStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadsDirectory);
+  },
+  filename: (_req, file, cb) => {
+    const extension = path.extname(file.originalname ?? "").toLowerCase();
+    const safeExtension = extension && extension.length <= 10 ? extension : "";
+    const uniqueName = `${Date.now()}-${randomUUID()}${safeExtension}`;
+    cb(null, uniqueName);
+  },
+});
+
+const baseUpload = multer({
+  storage: uploadStorage,
+  limits: {
+    fileSize: uploadFileSizeLimit,
+    files: uploadFileLimit,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (
+      file.mimetype?.startsWith("image/") ||
+      file.mimetype?.startsWith("video/")
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type: ${file.mimetype}`));
+    }
+  },
+});
+
+const mediaUpload = baseUpload.array("files");
+
+const mediaUploadMiddleware: express.RequestHandler = (req, res, next) => {
+  mediaUpload(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        const status =
+          err.code === "LIMIT_FILE_SIZE" || err.code === "LIMIT_FILE_COUNT"
+            ? 413
+            : 400;
+        return res.status(status).json({ message: err.message });
+      }
+
+      if (err instanceof Error) {
+        return res.status(400).json({ message: err.message });
+      }
+
+      return res.status(400).json({ message: "Upload failed" });
+    }
+
+    next();
+  });
+};
+
 function asyncHandler(
   handler: (
     req: Request,
@@ -144,6 +220,11 @@ function handleZodError(res: Response, error: z.ZodError) {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const apiRouter = express.Router();
+
+  app.use(
+    "/uploads",
+    express.static(uploadsDirectory, { maxAge: "7d", immutable: true }),
+  );
 
   apiRouter.get("/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -248,38 +329,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }),
   );
 
-  apiRouter.get(
-    "/templates/:idOrSlug",
-    asyncHandler(async (req, res) => {
-      const { idOrSlug } = req.params;
-      const lookupValue = idOrSlug.trim();
-      const template = UUID_REGEX.test(lookupValue)
-        ? await storage.getTemplate(lookupValue)
-        : await storage.getTemplateBySlug(lookupValue.toLowerCase());
+    apiRouter.get(
+      "/templates/:idOrSlug",
+      asyncHandler(async (req, res) => {
+        const { idOrSlug } = req.params;
+        const lookupValue = idOrSlug.trim();
+        const template = UUID_REGEX.test(lookupValue)
+          ? await storage.getTemplate(lookupValue)
+          : await storage.getTemplateBySlug(lookupValue.toLowerCase());
 
-      if (!template) {
-        return res.status(404).json({ message: "Template not found" });
-      }
+        if (!template) {
+          return res.status(404).json({ message: "Template not found" });
+        }
 
-      res.json(template);
-    }),
-  );
+        res.json(template);
+      }),
+    );
 
-  apiRouter.post(
-    "/templates",
-    requireAuth,
-    asyncHandler(async (req, res) => {
-      const parsed = createTemplateSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return handleZodError(res, parsed.error);
-      }
+    apiRouter.post(
+      "/templates",
+      requireAuth,
+      asyncHandler(async (req, res) => {
+        const parsed = createTemplateSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return handleZodError(res, parsed.error);
+        }
 
-      const template = await storage.createTemplate(parsed.data);
-      res.status(201).json(template);
-    }),
-  );
+        const template = await storage.createTemplate(parsed.data);
+        res.status(201).json(template);
+      }),
+    );
 
-  apiRouter.put(
+    apiRouter.post(
+      "/uploads",
+      requireAuth,
+      mediaUploadMiddleware,
+      (req, res) => {
+        const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+
+        if (!files.length) {
+          return res.status(400).json({ message: "No files uploaded" });
+        }
+
+        const uploads = files.map((file) => ({
+          url: `/uploads/${file.filename}`,
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          type: file.mimetype.startsWith("image/")
+            ? "image"
+            : file.mimetype.startsWith("video/")
+              ? "video"
+              : "other",
+        }));
+
+        res.status(201).json({ files: uploads });
+      },
+    );
+
+    apiRouter.put(
     "/templates/:idOrSlug",
     requireAuth,
     asyncHandler(async (req, res) => {

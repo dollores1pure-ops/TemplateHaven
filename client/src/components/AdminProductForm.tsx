@@ -16,14 +16,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Loader2, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   Template,
   TemplateCategory,
   TemplateStatus,
 } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { uploadMedia, type UploadedFile } from "@/lib/api";
 
 export interface TemplateFormValues {
   id?: string;
@@ -65,6 +66,9 @@ export default function AdminProductForm({
   const [tagsInput, setTagsInput] = useState("");
   const [featuresInput, setFeaturesInput] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -147,15 +151,142 @@ export default function AdminProductForm({
     await onSubmit?.(payload);
   };
 
-  const handleImageUpload = () => {
+  const handleAddImageByUrl = () => {
     const url = window.prompt("Enter image URL");
-    if (url) {
-      setImages([...images, url.trim()]);
+    if (!url) {
+      return;
+    }
+
+    const trimmed = url.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setImages((prev) => Array.from(new Set([...prev, trimmed])));
+  };
+
+  const handleOpenFilePicker = () => {
+    if (isUploading) {
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = async (input: File[] | FileList) => {
+    const filesArray = Array.from(input ?? []).filter((file) => file.size > 0);
+    if (!filesArray.length) {
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const uploaded: UploadedFile[] = await uploadMedia(filesArray);
+
+      if (!uploaded.length) {
+        toast({
+          title: "Upload failed",
+          description: "No files were uploaded.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const imageFiles = uploaded.filter((file) => file.type === "image");
+      const videoFiles = uploaded.filter((file) => file.type === "video");
+      const newImages = imageFiles.map((file) => file.url);
+      const newVideo = videoFiles[0];
+
+      if (newImages.length) {
+        setImages((prev) => Array.from(new Set([...prev, ...newImages])));
+      }
+
+      if (newVideo) {
+        setVideoUrl(newVideo.url);
+      }
+
+      const acceptedCount = newImages.length + (newVideo ? 1 : 0);
+      const skippedCount = uploaded.length - acceptedCount;
+
+      if (acceptedCount > 0) {
+        const summaryParts: string[] = [];
+        if (newImages.length) {
+          summaryParts.push(
+            `${newImages.length} image${newImages.length === 1 ? "" : "s"}`,
+          );
+        }
+        if (newVideo) {
+          summaryParts.push("1 video");
+        }
+
+        const skippedText =
+          skippedCount > 0
+            ? ` Skipped ${skippedCount} unsupported file${
+                skippedCount === 1 ? "" : "s"
+              }.`
+            : "";
+
+        toast({
+          title: "Upload complete",
+          description: `Added ${summaryParts.join(" and ")}.${skippedText}`.trim(),
+        });
+      } else {
+        toast({
+          title: "Unsupported files",
+          description:
+            "Only image and video files can be uploaded for template previews.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Upload failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+      setIsDragActive(false);
     }
   };
 
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const files = event.dataTransfer?.files;
+    if (files && files.length) {
+      void handleFilesSelected(Array.from(files));
+      event.dataTransfer.clearData();
+    }
+    setIsDragActive(false);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) {
+      return;
+    }
+    setIsDragActive(false);
+  };
+
   const removeImage = (index: number) => {
-    setImages(images.filter((_, i) => i !== index));
+    setImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleRemoveVideo = () => {
+    setVideoUrl("");
   };
 
   return (
@@ -300,21 +431,77 @@ export default function AdminProductForm({
             <Card>
               <CardHeader>
                 <CardTitle>Media Upload</CardTitle>
-                <CardDescription>Add images and previews</CardDescription>
+                <CardDescription>
+                  Upload preview images or videos from your device, or add a
+                  direct URL.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const { files } = event.target;
+                    if (files && files.length) {
+                      void handleFilesSelected(Array.from(files));
+                    }
+                    event.target.value = "";
+                  }}
+                />
                 <div
-                  className="border-2 border-dashed rounded-lg p-8 text-center hover-elevate cursor-pointer"
-                  onClick={handleImageUpload}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center hover-elevate cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${isDragActive ? "border-primary bg-muted/40" : "border-muted-foreground/40"} ${isUploading ? "opacity-75 pointer-events-none" : ""}`}
+                  onClick={handleOpenFilePicker}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleOpenFilePicker();
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-disabled={isUploading}
+                  aria-busy={isUploading}
                   data-testid="dropzone-images"
                 >
-                  <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-sm font-medium mb-1">
-                    Click to upload images
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    PNG, JPG up to 10MB
-                  </p>
+                  {isUploading ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="h-12 w-12 animate-spin text-muted-foreground" />
+                      <p className="text-sm font-medium">Uploading…</p>
+                      <p className="text-xs text-muted-foreground">
+                        This may take a moment depending on file size.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload className="h-12 w-12 text-muted-foreground" />
+                      <p className="text-sm font-medium">
+                        Click or drag files to upload
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Images (PNG, JPG, WebP) and videos (MP4, WebM) up to 25MB
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddImageByUrl}
+                    disabled={isUploading}
+                    data-testid="button-add-image-url"
+                  >
+                    Add image by URL
+                  </Button>
                 </div>
 
                 {images.length > 0 && (
@@ -338,6 +525,27 @@ export default function AdminProductForm({
                         </Button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {videoUrl && (
+                  <div className="relative group">
+                    <video
+                      src={videoUrl}
+                      controls
+                      className="w-full h-48 rounded-lg object-cover"
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={handleRemoveVideo}
+                      disabled={isUploading}
+                      data-testid="button-remove-video"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 )}
               </CardContent>
@@ -397,7 +605,7 @@ Dark mode ready`}
             <Button
               type="submit"
               data-testid="button-publish"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isUploading}
             >
               {isEditMode ? "Save Changes" : "Publish Template"}
             </Button>
