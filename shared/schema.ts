@@ -36,6 +36,29 @@ export type TemplateStatus = (typeof templateStatuses)[number];
 export const templateCategorySchema = z.enum(templateCategories);
 export const templateStatusSchema = z.enum(templateStatuses);
 
+const urlOrPathSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => {
+      if (!value) {
+        return false;
+      }
+
+      if (value.startsWith("/")) {
+        return true;
+      }
+
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "Invalid url" },
+  );
+
 export const templateSummarySchema = z.object({
   id: z.string().uuid(),
   slug: z.string().min(1),
@@ -43,13 +66,13 @@ export const templateSummarySchema = z.object({
   category: templateCategorySchema,
   price: z.number().min(0),
   status: templateStatusSchema,
-  heroImage: z.string().url(),
+  heroImage: urlOrPathSchema,
 });
 
 export const templateSchema = templateSummarySchema.extend({
   description: z.string().min(10),
-  galleryImages: z.array(z.string().url()).default([]),
-  videoUrl: z.string().url().nullable().optional(),
+  galleryImages: z.array(urlOrPathSchema).default([]),
+  videoUrl: urlOrPathSchema.nullable().optional(),
   liveDemoUrl: z.string().url().nullable().optional(),
   figmaUrl: z.string().url().nullable().optional(),
   tags: z.array(z.string()).default([]),
@@ -65,9 +88,9 @@ export const insertTemplateSchema = z.object({
   price: z.number().min(0),
   status: templateStatusSchema.optional(),
   description: z.string().min(10),
-  heroImage: z.string().url().optional(),
-  galleryImages: z.array(z.string().url()).optional(),
-  videoUrl: z.string().url().nullable().optional(),
+  heroImage: urlOrPathSchema.optional(),
+  galleryImages: z.array(urlOrPathSchema).optional(),
+  videoUrl: urlOrPathSchema.nullable().optional(),
   liveDemoUrl: z.string().url().nullable().optional(),
   figmaUrl: z.string().url().nullable().optional(),
   tags: z.array(z.string()).optional(),
