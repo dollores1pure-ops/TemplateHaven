@@ -116,7 +116,7 @@ export default function AdminProductForm({
     if (!images.length) {
       toast({
         title: "Add at least one image",
-        description: "Upload or add a URL for the template preview.",
+        description: "Upload a preview image from your device.",
         variant: "destructive",
       });
       return;
@@ -149,20 +149,6 @@ export default function AdminProductForm({
     };
 
     await onSubmit?.(payload);
-  };
-
-  const handleAddImageByUrl = () => {
-    const url = window.prompt("Enter image URL");
-    if (!url) {
-      return;
-    }
-
-    const trimmed = url.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    setImages((prev) => Array.from(new Set([...prev, trimmed])));
   };
 
   const handleOpenFilePicker = () => {
@@ -391,18 +377,6 @@ export default function AdminProductForm({
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="video">Video Preview URL</Label>
-                  <Input
-                    id="video"
-                    type="url"
-                    placeholder="https://youtube.com/..."
-                    value={videoUrl}
-                    onChange={(e) => setVideoUrl(e.target.value)}
-                    data-testid="input-video-url"
-                  />
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="live-demo">Live Demo URL</Label>
                   <Input
                     id="live-demo"
@@ -432,8 +406,7 @@ export default function AdminProductForm({
               <CardHeader>
                 <CardTitle>Media Upload</CardTitle>
                 <CardDescription>
-                  Upload preview images or videos from your device, or add a
-                  direct URL.
+                  Upload preview images or videos directly from your device.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -489,19 +462,6 @@ export default function AdminProductForm({
                       </p>
                     </div>
                   )}
-                </div>
-
-                <div className="flex justify-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddImageByUrl}
-                    disabled={isUploading}
-                    data-testid="button-add-image-url"
-                  >
-                    Add image by URL
-                  </Button>
                 </div>
 
                 {images.length > 0 && (
