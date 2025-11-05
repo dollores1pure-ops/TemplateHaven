@@ -24,8 +24,8 @@ export default function Signup() {
   const [, setLocation] = useLocation();
 
   const registerMutation = useMutation({
-    mutationFn: ({ username, password }: { username: string; password: string })
-      => register(username, password),
+    mutationFn: ({ username, password }: { username: string; password: string }) =>
+      register(username, password),
     onSuccess: (user) => {
       queryClient.setQueryData(["currentUser"], user);
       toast({
