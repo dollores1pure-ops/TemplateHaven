@@ -154,8 +154,21 @@ export async function removeCartItem(itemId: string): Promise<Cart> {
   return (await res.json()) as Cart;
 }
 
-export async function checkoutCart(): Promise<{ order: Order; cart: Cart }> {
+export async function checkoutCart(): Promise<{
+  url: string;
+  sessionId: string;
+}> {
   const res = await apiRequest("POST", "/api/cart/checkout");
+  return (await res.json()) as { url: string; sessionId: string };
+}
+
+export async function completeCheckout(sessionId: string): Promise<{
+  order: Order;
+  cart: Cart;
+}> {
+  const res = await apiRequest("POST", "/api/cart/checkout/complete", {
+    sessionId,
+  });
   return (await res.json()) as { order: Order; cart: Cart };
 }
 

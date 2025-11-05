@@ -4,6 +4,7 @@ import express, {
   type Request,
   type Response,
 } from "express";
+import Stripe from "stripe";
 import { createServer, type Server } from "http";
 import { z } from "zod";
 import {
@@ -15,6 +16,18 @@ import {
   updateTemplateSchema,
 } from "@shared/schema";
 import { storage, type TemplateFilters, type TemplateSort } from "./storage";
+
+type CheckoutOrder = Awaited<ReturnType<typeof storage.createOrderFromCart>>;
+
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+const stripeApiVersion: Stripe.LatestApiVersion = "2024-06-20";
+const stripe = stripeSecretKey
+  ? new Stripe(stripeSecretKey, { apiVersion: stripeApiVersion })
+  : null;
+
+if (!stripeSecretKey) {
+  console.warn("STRIPE_SECRET_KEY is not set. Stripe checkout is disabled.");
+}
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -65,6 +78,10 @@ const updateCartItemSchema = z.object({
   quantity: z.coerce.number().int(),
 });
 
+const checkoutCompletionSchema = z.object({
+  sessionId: z.string().trim().min(1, "sessionId is required"),
+});
+
 function asyncHandler(
   handler: (
     req: Request,
@@ -92,6 +109,29 @@ async function ensureCart(req: Request) {
     req.session.cartId = cart.id;
   }
   return cart;
+}
+
+function getRequestBaseUrl(req: Request): string {
+  const configured = process.env.CHECKOUT_BASE_URL;
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const protocol = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : forwardedProto?.split(",")[0] ?? req.protocol;
+
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const host = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : forwardedHost ?? req.get("host");
+
+  if (!host) {
+    throw new Error("Unable to determine host for checkout session");
+  }
+
+  return `${protocol}://${host}`;
 }
 
 function handleZodError(res: Response, error: z.ZodError) {
@@ -339,31 +379,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }),
   );
 
-  apiRouter.delete(
-    "/cart/items/:itemId",
-    asyncHandler(async (req, res) => {
-      const cart = await ensureCart(req);
-      const updatedCart = await storage.removeCartItem(
-        cart.id,
-        req.params.itemId,
-      );
-      res.json(updatedCart);
-    }),
-  );
+    apiRouter.delete(
+      "/cart/items/:itemId",
+      asyncHandler(async (req, res) => {
+        const cart = await ensureCart(req);
+        const updatedCart = await storage.removeCartItem(
+          cart.id,
+          req.params.itemId,
+        );
+        res.json(updatedCart);
+      }),
+    );
 
-  apiRouter.post(
-    "/cart/checkout",
-    asyncHandler(async (req, res) => {
-      const cart = await ensureCart(req);
-      if (cart.items.length === 0) {
-        return res.status(400).json({ message: "Cart is empty" });
-      }
+    apiRouter.post(
+      "/cart/checkout",
+      asyncHandler(async (req, res) => {
+        if (!stripe) {
+          return res
+            .status(503)
+            .json({ message: "Stripe is not configured" });
+        }
 
-      const order = await storage.createOrderFromCart(cart.id);
-      const freshCart = await storage.getOrCreateCart(cart.id);
-      res.status(201).json({ order, cart: freshCart });
-    }),
-  );
+        const cart = await ensureCart(req);
+        if (cart.items.length === 0) {
+          return res.status(400).json({ message: "Cart is empty" });
+        }
+
+        const baseUrl = getRequestBaseUrl(req);
+        const successUrl = `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
+        const cancelUrl = `${baseUrl}/checkout/cancel`;
+        const currency = (process.env.STRIPE_CURRENCY ?? "usd").toLowerCase();
+
+        const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
+          cart.items.map((item) => ({
+            quantity: item.quantity,
+            price_data: {
+              currency,
+              unit_amount: Math.round(item.unitPrice * 100),
+              product_data: {
+                name: item.template.title,
+                images: item.template.heroImage
+                  ? [item.template.heroImage]
+                  : undefined,
+              },
+            },
+          }));
+
+        const session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          line_items: lineItems,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          allow_promotion_codes: true,
+          metadata: {
+            cartId: cart.id,
+          },
+          automatic_tax: { enabled: false },
+        });
+
+        if (!session.url) {
+          return res
+            .status(500)
+            .json({ message: "Failed to create Stripe checkout session" });
+        }
+
+        res.status(201).json({ url: session.url, sessionId: session.id });
+      }),
+    );
+
+    apiRouter.post(
+      "/cart/checkout/complete",
+      asyncHandler(async (req, res) => {
+        if (!stripe) {
+          return res
+            .status(503)
+            .json({ message: "Stripe is not configured" });
+        }
+
+        const parsed = checkoutCompletionSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return handleZodError(res, parsed.error);
+        }
+
+        const { sessionId } = parsed.data;
+        const checkoutSession = await stripe.checkout.sessions.retrieve(
+          sessionId,
+        );
+
+        if (
+          checkoutSession.payment_status !== "paid" &&
+          checkoutSession.status !== "complete"
+        ) {
+          return res
+            .status(400)
+            .json({ message: "Checkout session is not paid" });
+        }
+
+        const cartId = checkoutSession.metadata?.cartId as string | undefined;
+        if (!cartId) {
+          return res
+            .status(400)
+            .json({ message: "Checkout session missing cart information" });
+        }
+
+        const completedSessions =
+          req.session.completedCheckoutSessionIds ?? [];
+        let order: CheckoutOrder | undefined;
+
+        if (!completedSessions.includes(sessionId)) {
+          try {
+            order = await storage.createOrderFromCart(cartId);
+            req.session.completedCheckoutSessionIds = [
+              ...completedSessions,
+              sessionId,
+            ];
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              error.message.toLowerCase().includes("cart is empty")
+            ) {
+              const orders = await storage.listOrders();
+              order = orders.find((existing) => existing.cartId === cartId);
+            } else {
+              throw error;
+            }
+          }
+        } else {
+          const orders = await storage.listOrders();
+          order = orders.find((existing) => existing.cartId === cartId);
+        }
+
+        if (!order) {
+          const orders = await storage.listOrders();
+          order = orders.find((existing) => existing.cartId === cartId);
+        }
+
+        if (!order) {
+          return res
+            .status(404)
+            .json({ message: "No order found for this checkout session" });
+        }
+
+        const cart = await storage.getOrCreateCart(cartId);
+        res.json({ order, cart });
+      }),
+    );
 
   apiRouter.get(
     "/admin/stats",

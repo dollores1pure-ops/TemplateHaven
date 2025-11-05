@@ -112,13 +112,18 @@ export default function Home() {
 
   const checkoutMutation = useMutation({
     mutationFn: checkoutCart,
-    onSuccess: ({ cart }) => {
-      queryClient.setQueryData(["cart"], cart);
-      toast({
-        title: "Checkout complete",
-        description: "We have emailed your receipt and download links.",
-      });
+    onSuccess: ({ url }) => {
       setCartOpen(false);
+      if (url) {
+        window.location.href = url;
+      } else {
+        toast({
+          title: "Unable to start checkout",
+          description:
+            "We could not generate a payment session. Please try again.",
+          variant: "destructive",
+        });
+      }
     },
     onError: (error: unknown) => {
       toast({
@@ -204,6 +209,7 @@ export default function Home() {
         onRemoveItem={handleRemoveFromCart}
         onUpdateItemQuantity={handleUpdateQuantity}
         onCheckout={handleCheckout}
+        checkoutLoading={checkoutMutation.isPending}
       />
     </div>
   );
