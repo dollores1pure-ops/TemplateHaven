@@ -8,6 +8,8 @@ import Home from "@/pages/Home";
 import Admin from "@/pages/Admin";
 import TemplateDetail from "@/pages/TemplateDetail";
 import Categories from "@/pages/Categories";
+import CheckoutSuccess from "@/pages/CheckoutSuccess";
+import CheckoutCancel from "@/pages/CheckoutCancel";
 
 function Router() {
   return (
@@ -16,6 +18,8 @@ function Router() {
       <Route path="/categories" component={Categories} />
       <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/admin" component={Admin} />
+      <Route path="/checkout/success" component={CheckoutSuccess} />
+      <Route path="/checkout/cancel" component={CheckoutCancel} />
       <Route component={NotFound} />
     </Switch>
   );

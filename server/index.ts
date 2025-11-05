@@ -14,6 +14,7 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     cartId?: string;
+    completedCheckoutSessionIds?: string[];
   }
 }
 

@@ -28,6 +28,7 @@ interface CartModalProps {
   onRemoveItem?: (id: string) => void;
   onUpdateItemQuantity?: (id: string, quantity: number) => void;
   onCheckout?: () => void;
+  checkoutLoading?: boolean;
 }
 
 export default function CartModal({
@@ -38,6 +39,7 @@ export default function CartModal({
   onRemoveItem,
   onUpdateItemQuantity,
   onCheckout,
+  checkoutLoading = false,
 }: CartModalProps) {
   const total =
     subtotal !== undefined
@@ -163,9 +165,10 @@ export default function CartModal({
                 size="lg"
                 className="w-full"
                 onClick={onCheckout}
+                disabled={checkoutLoading}
                 data-testid="button-checkout"
               >
-                Proceed to Checkout
+                {checkoutLoading ? "Redirecting..." : "Proceed to Checkout"}
               </Button>
             </SheetFooter>
           </>
